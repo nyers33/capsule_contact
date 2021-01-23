@@ -343,8 +343,22 @@ int manifoldQR(Contact* contacts, const Capsule& bodyA, const Capsule& bodyB)
 		}
 		if (((x1[0] <= 0.0f + 1e-4 && x1[1] <= 0.0f + 1e-4) || (x1[0] >= 1.0f - 1e-4 && x1[1] >= 1.0f - 1e-4)) && ((x2[0] <= 0.0f + 1e-4 && x2[1] <= 0.0f + 1e-4) || (x2[0] >= 1.0f - 1e-4 && x2[1] >= 1.0f - 1e-4)))
 		{
-			fp.e.inFeature = BODY;
-			fp.e.outFeature = BODY;
+			if (x1[0] <= 0.0f + 1e-4)
+			{
+				fp.e.inFeature = NEG_Y;
+			}
+			if (x1[0] >= 1.0f - 1e-4)
+			{
+				fp.e.inFeature = POS_Y;
+			}
+			if (x2[0] <= 0.0f + 1e-4)
+			{
+				fp.e.outFeature = NEG_Y;
+			}
+			if (x2[0] >= 1.0f - 1e-4)
+			{
+				fp.e.outFeature = POS_Y;
+			}
 			contacts[0].feature = fp;
 			return 1;
 		}
