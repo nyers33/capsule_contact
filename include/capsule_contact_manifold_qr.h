@@ -2,13 +2,6 @@
 #include <algorithm>
 #include <Eigen/Dense>
 
-typedef Eigen::Matrix<float, 2, 2> Mat22;
-typedef Eigen::Matrix<float, 3, 3> Mat33;
-typedef Eigen::Matrix<float, 4, 4> Mat44;
-typedef Eigen::Matrix<float, 3, 2> Mat32;
-typedef Eigen::Matrix<float, 2, 1> Vec2;
-typedef Eigen::Matrix<float, 3, 1> Vec3;
-
 template<typename T> using unsized_raw_array = T[];
 
 // manifold data structure & collision feature uses the pattern
@@ -49,74 +42,75 @@ union FeaturePair
 	int value;
 };
 
-template<typename Derived>
+template <typename Real, int N>
 struct Contact
 {
-	Contact() : separation(0.0f), feature{ 0 } {}
+	Contact() : separation(static_cast<Real>(0)), feature{ 0 } {}
 
-	Eigen::Matrix<typename Derived::Scalar, Derived::RowsAtCompileTime - 1, 1> position;
-	Eigen::Matrix<typename Derived::Scalar, Derived::RowsAtCompileTime - 1, 1> normal;
-	float separation;
+	Eigen::Matrix<Real, N, 1> position;
+	Eigen::Matrix<Real, N, 1> normal;
+	Real separation;
 	FeaturePair feature;
 };
 
-template<typename Derived>
+template <typename Real, int N>
 struct Capsule
 {
-	Capsule() : height(1.0f), rad(0.5f) {}
-	Capsule(const Eigen::MatrixBase<Derived>& pose, float height, float rad) : pose(pose), height(height), rad(rad) {}
+	Capsule() : height(static_cast<Real>(1)), rad(static_cast<Real>(0.5)) {}
+	Capsule(const Eigen::Matrix<Real, N+1, N+1>& pose, Real height, Real rad) : pose(pose), height(height), rad(rad) {}
 
-	Eigen::Matrix<typename Derived::Scalar, Derived::RowsAtCompileTime, Derived::ColsAtCompileTime> pose;
-	float height, rad;
+	Eigen::Matrix<Real, N+1, N+1> pose;
+	Real height, rad;
 
 	auto translation() const
 	{
-		return pose.col(Derived::ColsAtCompileTime - 1).block<Derived::RowsAtCompileTime - 1, 1>(0, 0);
+		return pose.col(N).block<N, 1>(0, 0);
 	}
 
 	auto rotation() const
 	{
-		return pose.block<Derived::RowsAtCompileTime - 1, Derived::ColsAtCompileTime - 1>(0, 0);
+		return pose.block<N, N>(0, 0);
 	}
 };
 
-typedef Capsule<Mat33> Capsule2D;
-typedef Capsule<Mat44> Capsule3D;
-
 // QR Decomposition with the Gram-Schmidt Procedure from RPubs
-template<typename Derived>
-void qrDecompGS(const Eigen::MatrixBase<Derived>& inMat, Eigen::MatrixBase<Derived>& qMat, Mat22& rMat)
+template <typename Real, int N>
+void qrDecompGS(const Eigen::Matrix<Real, N, 2>& inMat, Eigen::Matrix<Real, N, 2>& qMat, Eigen::Matrix<Real, 2, 2>& rMat)
 {
+	auto zeroVec = Eigen::Matrix<Real, N, 1>::Zero();
+	const Real eps = static_cast<Real>(1e-4);
+
 	auto a1 = inMat.col(0);
 	auto a2 = inMat.col(1);
 
-	auto zeroVec = Eigen::Matrix<Derived::Scalar, (Eigen::Index)Derived::RowsAtCompileTime, 1>::Zero();
-
 	auto v1 = a1;
-	float v1Norm = v1.norm();
-	auto e1 = (v1Norm > 1e-4) ? v1.normalized() : zeroVec;
+	Real v1Norm = v1.norm();
+	auto e1 = (v1Norm > eps) ? v1.normalized() : zeroVec;
 	auto v2 = a2 - a2.dot(e1) * e1;
-	float v2Norm = v2.norm();
-	auto e2 = (v2Norm > 1e-4) ? v2.normalized() : zeroVec;
+	Real v2Norm = v2.norm();
+	auto e2 = (v2Norm > eps) ? v2.normalized() : zeroVec;
 
 	qMat.col(0) = e1;
 	qMat.col(1) = e2;
 
 	rMat(0, 0) = a1.dot(e1);
-	rMat(1, 0) = 0.0f;
+	rMat(1, 0) = static_cast<Real>(0);
 	rMat(0, 1) = a2.dot(e1);
 	rMat(1, 1) = a2.dot(e2);
 }
 
 // Real-Time Collision Detection by Christer Ericson
-float sqDistPointSeg(Vec2 a, Vec2 b, Vec2 c)
+template <typename Real>
+Real sqDistPointSeg(Eigen::Matrix<Real, 2, 1> a, Eigen::Matrix<Real, 2, 1> b, Eigen::Matrix<Real, 2, 1> c)
 {
+	typedef Eigen::Matrix<Real, 2, 1> Vec2;
+
 	Vec2 ab = b - a;
 	Vec2 ac = c - a;
 	Vec2 bc = c - b;
-	float e = ac.dot(ab);
-	float f = ab.dot(ab);
-	if (e < 0.0f)
+	Real e = ac.dot(ab);
+	Real f = ab.dot(ab);
+	if (e < static_cast<Real>(0))
 	{
 		return ac.dot(ac);
 	}
@@ -131,29 +125,37 @@ float sqDistPointSeg(Vec2 a, Vec2 b, Vec2 c)
 }
 
 // Real-Time Collision Detection by Christer Ericson
-Vec2 closestPtPointSeg(Vec2 a, Vec2 b, Vec2 c)
+template <typename Real>
+Eigen::Matrix<Real, 2, 1> closestPtPointSeg(Eigen::Matrix<Real, 2, 1> a, Eigen::Matrix<Real, 2, 1> b, Eigen::Matrix<Real, 2, 1> c)
 {
+	typedef Eigen::Matrix<Real, 2, 1> Vec2;
+	const Real eps = static_cast<Real>(1e-4);
+
 	Vec2 ab = b - a;
-	float t = (c - a).dot(ab) / ab.dot(ab);
-	if (ab.dot(ab) < 1e-4)
-		t = 0.0f;
-	t = std::clamp(t, 0.0f, 1.0f);
+	Real t = (c - a).dot(ab) / ab.dot(ab);
+	if (ab.dot(ab) < eps)
+		t = static_cast<Real>(0);
+	t = std::clamp(t, static_cast<Real>(0), static_cast<Real>(1));
 	return a + t * ab;
 }
 
 // find the point on one of the parallelogram's edges that is closest to given point
 // if given point is inside the parallelogram, return given point
-Vec2 parallelogramContainsPt(Vec2 o, Vec2 a, Vec2 b, Vec2 pt)
+template <typename Real>
+Eigen::Matrix<Real, 2, 1> parallelogramContainsPt(Eigen::Matrix<Real, 2, 1> o, Eigen::Matrix<Real, 2, 1> a, Eigen::Matrix<Real, 2, 1> b, Eigen::Matrix<Real, 2, 1> pt)
 {
-	Vec2 p = pt - o;
-	float denomAbs = std::abs(a.x() * b.y() - a.y() * b.x());
+	typedef Eigen::Matrix<Real, 2, 1> Vec2;
+	const Real eps = static_cast<Real>(1e-4);
 
-	float mu, lambda;
+	Vec2 p = pt - o;
+	Real denomAbs = std::abs(a.x() * b.y() - a.y() * b.x());
+
+	Real mu, lambda;
 
 	mu = (p.x() * b.y() - p.y() * b.x()) / (a.x() * b.y() - a.y() * b.x());
 	lambda = (p.x() * a.y() - p.y() * a.x()) / (a.y() * b.x() - a.x() * b.y());
 
-	if (denomAbs > 1e-4 && (0.0f <= mu && mu <= 1.0f && 0.0f <= lambda && lambda <= 1.0f))
+	if (denomAbs > eps && (static_cast<Real>(0) <= mu && mu <= static_cast<Real>(1) && static_cast<Real>(0) <= lambda && lambda <= static_cast<Real>(1)))
 	{
 		// inside
 		return pt;
@@ -161,12 +163,12 @@ Vec2 parallelogramContainsPt(Vec2 o, Vec2 a, Vec2 b, Vec2 pt)
 	else
 	{
 		// outside
-		Vec2 edgeList[4][2] = { { Vec2(0.0f, 0.0f), Vec2(a.x(), a.y()) }, { Vec2(a.x(), a.y()), Vec2(a.x(), a.y()) + Vec2(b.x(), b.y()) }, { Vec2(a.x(), a.y()) + Vec2(b.x(), b.y()), Vec2(b.x(), b.y()) }, { Vec2(b.x(), b.y()), Vec2(0.0f, 0.0f) } };
-		float minDistToEdge = std::numeric_limits<float>::max();
+		Vec2 edgeList[4][2] = { { Vec2(0, 0), Vec2(a.x(), a.y()) }, { Vec2(a.x(), a.y()), Vec2(a.x(), a.y()) + Vec2(b.x(), b.y()) }, { Vec2(a.x(), a.y()) + Vec2(b.x(), b.y()), Vec2(b.x(), b.y()) }, { Vec2(b.x(), b.y()), Vec2(0, 0) } };
+		Real minDistToEdge = std::numeric_limits<Real>::max();
 		int iEdge = -1;
 		for (int i = 0; i < 4; i++)
 		{
-			float distToEdge = sqDistPointSeg(edgeList[i][0], edgeList[i][1], p);
+			Real distToEdge = sqDistPointSeg(edgeList[i][0], edgeList[i][1], p);
 			if (distToEdge <= minDistToEdge)
 			{
 				minDistToEdge = distToEdge;
@@ -179,9 +181,11 @@ Vec2 parallelogramContainsPt(Vec2 o, Vec2 a, Vec2 b, Vec2 pt)
 }
 
 // Efficient Calculation of Minimum Distance Between Capsules and Its Use in Robotics
-template<typename T, typename U>
-float distanceQR(const T bodyA[2], const T bodyB[2], U* qMat_out = nullptr, Mat22* rMat_out = nullptr, Vec2* opt_out = nullptr)
+template <typename Real, int N>
+Real distanceQR(const Eigen::Matrix<Real, N, 1> bodyA[2], const Eigen::Matrix<Real, N, 1> bodyB[2], Eigen::Matrix<Real, N, 2>* qMat_out = nullptr, Eigen::Matrix<Real, 2, 2>* rMat_out = nullptr, Eigen::Matrix<Real, 2, 1>* opt_out = nullptr)
 {
+	typedef Eigen::Matrix<Real, 2, 1> Vec2;
+
 	const auto& p1 = bodyA[0]; // seg0p0
 	const auto& u1 = bodyA[1]; // seg0p1
 
@@ -191,8 +195,8 @@ float distanceQR(const T bodyA[2], const T bodyB[2], U* qMat_out = nullptr, Mat2
 	auto s1 = u1 - p1;
 	auto s2 = u2 - p2;
 
-	U inMat, qMat;
-	Mat22 rMat;
+	Eigen::Matrix<Real, N, 2> inMat, qMat;
+	Eigen::Matrix<Real, 2, 2> rMat;
 	inMat.col(0) = s2;
 	inMat.col(1) = -s1;
 
@@ -206,11 +210,11 @@ float distanceQR(const T bodyA[2], const T bodyB[2], U* qMat_out = nullptr, Mat2
 		*rMat_out = rMat;
 	}
 
-	Vec2 parallelogramOrigin = rMat * Vec2(0.0f, 0.0f) + qMat.transpose() * (p2 - p1);
-	Vec2 parallelogramSideA = rMat * Vec2(1.0f, 0.0f) + qMat.transpose() * (p2 - p1) - parallelogramOrigin;
-	Vec2 parallelogramSideB = rMat * Vec2(0.0f, 1.0f) + qMat.transpose() * (p2 - p1) - parallelogramOrigin;
+	Vec2 parallelogramOrigin = rMat * Vec2(0, 0) + qMat.transpose() * (p2 - p1);
+	Vec2 parallelogramSideA = rMat * Vec2(1, 0) + qMat.transpose() * (p2 - p1) - parallelogramOrigin;
+	Vec2 parallelogramSideB = rMat * Vec2(0, 1) + qMat.transpose() * (p2 - p1) - parallelogramOrigin;
 
-	Vec2 opt = parallelogramContainsPt(parallelogramOrigin, parallelogramSideA, parallelogramSideB, Vec2(0.0f, 0.0f));
+	Vec2 opt = parallelogramContainsPt(parallelogramOrigin, parallelogramSideA, parallelogramSideB, Vec2(0, 0));
 	if (opt_out)
 	{
 		*opt_out = opt;
@@ -220,33 +224,35 @@ float distanceQR(const T bodyA[2], const T bodyB[2], U* qMat_out = nullptr, Mat2
 	return opt.dot(opt) + (p2 - p1).dot(p2 - p1) - (p2 - p1).dot(qMat * qMat.transpose() * (p2 - p1));
 }
 
-template<typename T>
-int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& bodyB)
+template <typename Real, int N>
+int manifoldQR(Contact<Real, N>* contacts, const Capsule<Real, N>& bodyA, const Capsule<Real, N>& bodyB)
 {
-	const auto zeroVec = Eigen::Matrix<typename T::Scalar, (Eigen::Index)T::RowsAtCompileTime - 1, 1>::Zero();
+	typedef Eigen::Matrix<Real, 2, 1> Vec2;
+	const auto zeroVec = Eigen::Matrix<Real, N, 1>::Zero();
+	const Real eps = static_cast<Real>(1e-4);
 	
-	auto p1 = bodyA.translation() - 0.5f * bodyA.height * bodyA.rotation().col(1); // seg0p0
-	auto u1 = bodyA.translation() + 0.5f * bodyA.height * bodyA.rotation().col(1); // seg0p1
+	auto p1 = bodyA.translation() - static_cast<Real>(0.5) * bodyA.height * bodyA.rotation().col(1); // seg0p0
+	auto u1 = bodyA.translation() + static_cast<Real>(0.5) * bodyA.height * bodyA.rotation().col(1); // seg0p1
 
-	auto p2 = bodyB.translation() - 0.5f * bodyB.height * bodyB.rotation().col(1); // seg1p0
-	auto u2 = bodyB.translation() + 0.5f * bodyB.height * bodyB.rotation().col(1); // seg1p1
+	auto p2 = bodyB.translation() - static_cast<Real>(0.5) * bodyB.height * bodyB.rotation().col(1); // seg1p0
+	auto u2 = bodyB.translation() + static_cast<Real>(0.5) * bodyB.height * bodyB.rotation().col(1); // seg1p1
 
 	auto s1 = u1 - p1;
 	auto s2 = u2 - p2;
 
-	float r1 = bodyA.rad;
-	float r2 = bodyB.rad;
+	Real r1 = bodyA.rad;
+	Real r2 = bodyB.rad;
 
-	auto&& p1u1 = unsized_raw_array< Eigen::Matrix<typename T::Scalar, (Eigen::Index)T::RowsAtCompileTime - 1, 1> >{ p1, u1 };
-	auto&& p2u2 = unsized_raw_array< Eigen::Matrix<typename T::Scalar, (Eigen::Index)T::RowsAtCompileTime - 1, 1> >{ p2, u2 };
+	auto&& p1u1 = unsized_raw_array< Eigen::Matrix<Real, N, 1> >{ p1, u1 };
+	auto&& p2u2 = unsized_raw_array< Eigen::Matrix<Real, N, 1> >{ p2, u2 };
 	
 	// 3D - Mat32;
 	// 2D - Mat22;
-	auto qMat = Eigen::Matrix<typename T::Scalar, (Eigen::Index)T::RowsAtCompileTime - 1, 2>();
-	Mat22 rMat;
+	auto qMat = Eigen::Matrix<Real, N, 2>();
+	Eigen::Matrix<Real, 2, 2> rMat;
 	Vec2 opt;
 	
-	float sqDist = distanceQR(p1u1, p2u2, &qMat, &rMat, &opt);
+	Real sqDist = distanceQR(p1u1, p2u2, &qMat, &rMat, &opt);
 
 	if ((bodyA.rad + bodyB.rad) * (bodyA.rad + bodyB.rad) < sqDist)
 	{
@@ -255,23 +261,23 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 
 	Vec2 rx = opt - qMat.transpose() * (p2 - p1);
 
-	float parallelTest = std::abs(std::abs(s1.dot(s2)) - s1.norm() * s2.norm());
-	
-	// line vs line nearest in point - not parallel
-	if (std::abs(rMat.col(0).x()) > 1e-4 && std::abs(rMat.col(1).y()) > 1e-4 && parallelTest > 1e-4)
-	{
-		float x1 = rx.y() / rMat.col(1).y();
-		float x2 = (rMat.col(1).y() * rx.x() - rMat.col(1).x() * rx.y()) / (rMat.col(0).x() * rMat.col(1).y());
+	Real parallelTest = std::abs(std::abs(s1.dot(s2)) - s1.norm() * s2.norm());
 
-		if (x2 < 0.0f)
-			x2 = 0.0f;
+	// line vs line nearest in point - not parallel
+	if (std::abs(rMat.col(0).x()) > eps && std::abs(rMat.col(1).y()) > eps && parallelTest > eps)
+	{
+		Real x1 = rx.y() / rMat.col(1).y();
+		Real x2 = (rMat.col(1).y() * rx.x() - rMat.col(1).x() * rx.y()) / (rMat.col(0).x() * rMat.col(1).y());
+
+		if (x2 < static_cast<Real>(0))
+			x2 = static_cast<Real>(0);
 
 		FeaturePair fp;
-		if (x1 <= 0.0f + 1e-4)
+		if (x1 <= static_cast<Real>(0) + eps)
 		{
 			fp.e.inFeature = NEG_Y;
 		}
-		else if (x1 >= 1.0f - 1e-4)
+		else if (x1 >= static_cast<Real>(1) - eps)
 		{
 			fp.e.inFeature = POS_Y;
 		}
@@ -279,11 +285,11 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 		{
 			fp.e.inFeature = BODY;
 		}
-		if (x2 <= 0.0f + 1e-4)
+		if (x2 <= static_cast<Real>(0) + eps)
 		{
 			fp.e.outFeature = NEG_Y;
 		}
-		else if (x2 >= 1.0f - 1e-4)
+		else if (x2 >= static_cast<Real>(1) - eps)
 		{
 			fp.e.outFeature = POS_Y;
 		}
@@ -293,8 +299,8 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 		}
 
 		auto nContact = ((p2 + x2 * s2) - (p1 + x1 * s1));
-		float nContactNorm = nContact.norm();
-		if (nContactNorm > 1e-4)
+		Real nContactNorm = nContact.norm();
+		if (nContactNorm > eps)
 		{
 			contacts[0].normal = nContact.normalized();
 		}
@@ -304,25 +310,25 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 		}
 
 		contacts[0].separation = sqrtf(sqDist) - r1 - r2;
-		contacts[0].position = 0.5f * (((p1 + x1 * s1) + r1 * contacts[0].normal) + ((p2 + x2 * s2) - r2 * contacts[0].normal));
+		contacts[0].position = static_cast<Real>(0.5) * (((p1 + x1 * s1) + r1 * contacts[0].normal) + ((p2 + x2 * s2) - r2 * contacts[0].normal));
 		contacts[0].feature = fp;
 
 		return 1;
 	}
 	
-	float s1LenSqd = s1.dot(s1);
-	float s2LenSqd = s2.dot(s2);
+	Real s1LenSqd = s1.dot(s1);
+	Real s2LenSqd = s2.dot(s2);
 	
 	// point vs point
-	if (s1LenSqd < 1e-4 && s2LenSqd < 1e-4)
+	if (s1LenSqd < eps && s2LenSqd < eps)
 	{
 		FeaturePair fp;
 		fp.e.inFeature = BODY;
 		fp.e.outFeature = BODY;
 
 		auto nContact = (p2 - p1);
-		float nContactNorm = nContact.norm();
-		if (nContactNorm > 1e-4)
+		Real nContactNorm = nContact.norm();
+		if (nContactNorm > eps)
 		{
 			contacts[0].normal = nContact.normalized();
 		}
@@ -332,40 +338,40 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 		}
 
 		contacts[0].separation = sqrtf(sqDist) - r1 - r2;
-		contacts[0].position = 0.5f * ((p1 + r1 * contacts[0].normal) + (p2 - r2 * contacts[0].normal));
+		contacts[0].position = static_cast<Real>(0.5) * ((p1 + r1 * contacts[0].normal) + (p2 - r2 * contacts[0].normal));
 		contacts[0].feature = fp;
 
 		return 1;
 	}
 	
 	// line vs line - parallel lines
-	if (s1LenSqd * s2LenSqd > 1e-4)
+	if (s1LenSqd * s2LenSqd > eps)
 	{
-		float x1[2];
-		float x2[2];
+		Real x1[2];
+		Real x2[2];
 		FeaturePair fp;
 
 		if (s1LenSqd > s2LenSqd)
 		{
-			x1[0] = std::min(std::max(((1.0f / sqrtf(s1LenSqd)) * s1).dot(p2 - p1) / sqrtf(s1LenSqd), 0.0f), 1.0f);
-			x1[1] = std::min(std::max(((1.0f / sqrtf(s1LenSqd)) * s1).dot(u2 - p1) / sqrtf(s1LenSqd), 0.0f), 1.0f);
+			x1[0] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s1LenSqd)) * s1).dot(p2 - p1) / sqrtf(s1LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
+			x1[1] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s1LenSqd)) * s1).dot(u2 - p1) / sqrtf(s1LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
 
-			x2[0] = std::min(std::max(((1.0f / sqrtf(s2LenSqd)) * s2).dot(p1 - p2 + x1[0] * s1) / sqrtf(s2LenSqd), 0.0f), 1.0f);
-			x2[1] = std::min(std::max(((1.0f / sqrtf(s2LenSqd)) * s2).dot(p1 - p2 + x1[1] * s1) / sqrtf(s2LenSqd), 0.0f), 1.0f);
+			x2[0] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s2LenSqd)) * s2).dot(p1 - p2 + x1[0] * s1) / sqrtf(s2LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
+			x2[1] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s2LenSqd)) * s2).dot(p1 - p2 + x1[1] * s1) / sqrtf(s2LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
 
 		}
 		else
 		{
-			x2[0] = std::min(std::max(((1.0f / sqrtf(s2LenSqd)) * s2).dot(p1 - p2) / sqrtf(s2LenSqd), 0.0f), 1.0f);
-			x2[1] = std::min(std::max(((1.0f / sqrtf(s2LenSqd)) * s2).dot(u1 - p2) / sqrtf(s2LenSqd), 0.0f), 1.0f);
+			x2[0] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s2LenSqd)) * s2).dot(p1 - p2) / sqrtf(s2LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
+			x2[1] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s2LenSqd)) * s2).dot(u1 - p2) / sqrtf(s2LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
 
-			x1[0] = std::min(std::max(((1.0f / sqrtf(s1LenSqd)) * s1).dot(p2 - p1 + x2[0] * s2) / sqrtf(s1LenSqd), 0.0f), 1.0f);
-			x1[1] = std::min(std::max(((1.0f / sqrtf(s1LenSqd)) * s1).dot(p2 - p1 + x2[1] * s2) / sqrtf(s1LenSqd), 0.0f), 1.0f);
+			x1[0] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s1LenSqd)) * s1).dot(p2 - p1 + x2[0] * s2) / sqrtf(s1LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
+			x1[1] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s1LenSqd)) * s1).dot(p2 - p1 + x2[1] * s2) / sqrtf(s1LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
 		}
 
-		auto nContact = (p2 + 0.5f * (x2[0] + x2[1]) * s2) - (p1 + 0.5f * (x1[0] + x1[1]) * s1);
-		float nContactNorm = nContact.norm();
-		if (nContactNorm > 1e-4)
+		auto nContact = (p2 + static_cast<Real>(0.5) * (x2[0] + x2[1]) * s2) - (p1 + static_cast<Real>(0.5) * (x1[0] + x1[1]) * s1);
+		Real nContactNorm = nContact.norm();
+		if (nContactNorm > eps)
 		{
 			contacts[0].normal = nContact.normalized();
 		}
@@ -377,28 +383,32 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 		for (int i = 0; i < 2; ++i)
 		{
 			contacts[i].separation = sqrtf(sqDist) - r1 - r2;
-			contacts[i].position = (p1 + x1[i] * s1) + 0.5f * (r1 - r2 + sqrtf(sqDist)) * contacts[i].normal;
+			contacts[i].position = (p1 + x1[i] * s1) + static_cast<Real>(0.5) * (r1 - r2 + sqrtf(sqDist)) * contacts[i].normal;
 			fp.e.inFeature = BODY;
 			fp.e.outFeature = BODY;
 			contacts[i].feature = fp;
 		}
 
 		// capsule cap check
-		if (((x1[0] <= 0.0f + 1e-4 && x1[1] <= 0.0f + 1e-4) || (x1[0] >= 1.0f - 1e-4 && x1[1] >= 1.0f - 1e-4)) && ((x2[0] <= 0.0f + 1e-4 && x2[1] <= 0.0f + 1e-4) || (x2[0] >= 1.0f - 1e-4 && x2[1] >= 1.0f - 1e-4)))
+		if (
+			((x1[0] <= static_cast<Real>(0) + eps && x1[1] <= static_cast<Real>(0) + eps) || (x1[0] >= static_cast<Real>(1) - eps && x1[1] >= static_cast<Real>(1) - eps))
+			&&
+			((x2[0] <= static_cast<Real>(0) + eps && x2[1] <= static_cast<Real>(0) + eps) || (x2[0] >= static_cast<Real>(1) - eps && x2[1] >= static_cast<Real>(1) - eps))
+			)
 		{
-			if (x1[0] <= 0.0f + 1e-4)
+			if (x1[0] <= static_cast<Real>(0) + eps)
 			{
 				fp.e.inFeature = NEG_Y;
 			}
-			if (x1[0] >= 1.0f - 1e-4)
+			if (x1[0] >= static_cast<Real>(1) - eps)
 			{
 				fp.e.inFeature = POS_Y;
 			}
-			if (x2[0] <= 0.0f + 1e-4)
+			if (x2[0] <= static_cast<Real>(0) + eps)
 			{
 				fp.e.outFeature = NEG_Y;
 			}
-			if (x2[0] >= 1.0f - 1e-4)
+			if (x2[0] >= static_cast<Real>(1) - eps)
 			{
 				fp.e.outFeature = POS_Y;
 			}
@@ -414,23 +424,23 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 	
 	// line vs point
 	{
-		float x1[2];
-		float x2[2];
+		Real x1[2];
+		Real x2[2];
 		FeaturePair fp;
 
 		if (s1LenSqd > s2LenSqd)
 		{
-			x1[1] = std::min(std::max(((1.0f / sqrtf(s1LenSqd)) * s1).dot(u2 - p1) / sqrtf(s1LenSqd), 0.0f), 1.0f);
-			x1[0] = std::min(std::max(((1.0f / sqrtf(s1LenSqd)) * s1).dot(p2 - p1) / sqrtf(s1LenSqd), 0.0f), 1.0f);
+			x1[1] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s1LenSqd)) * s1).dot(u2 - p1) / sqrtf(s1LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
+			x1[0] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s1LenSqd)) * s1).dot(p2 - p1) / sqrtf(s1LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
 
-			x2[0] = 0.0f;
-			x2[1] = 1.0f;
+			x2[0] = static_cast<Real>(0);
+			x2[1] = static_cast<Real>(1);
 
-			if (x1[0] == 0.0f)
+			if (x1[0] == static_cast<Real>(0))
 			{
 				fp.e.inFeature = NEG_Y;
 			}
-			else if (x1[0] == 1.0f)
+			else if (x1[0] == static_cast<Real>(1))
 			{
 				fp.e.inFeature = POS_Y;
 			}
@@ -442,17 +452,17 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 		}
 		else
 		{
-			x1[0] = 0.0f;
-			x1[1] = 1.0f;
+			x1[0] = static_cast<Real>(0);
+			x1[1] = static_cast<Real>(1);
 
-			x2[0] = std::min(std::max(((1.0f / sqrtf(s2LenSqd)) * s2).dot(p1 - p2) / sqrtf(s2LenSqd), 0.0f), 1.0f);
-			x2[1] = std::min(std::max(((1.0f / sqrtf(s2LenSqd)) * s2).dot(u1 - p2) / sqrtf(s2LenSqd), 0.0f), 1.0f);
+			x2[0] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s2LenSqd)) * s2).dot(p1 - p2) / sqrtf(s2LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
+			x2[1] = std::min(std::max(((static_cast<Real>(1) / sqrtf(s2LenSqd)) * s2).dot(u1 - p2) / sqrtf(s2LenSqd), static_cast<Real>(0)), static_cast<Real>(1));
 
-			if (x2[0] == 0.0f)
+			if (x2[0] == static_cast<Real>(0))
 			{
 				fp.e.outFeature = NEG_Y;
 			}
-			else if (x2[0] == 1.0f)
+			else if (x2[0] == static_cast<Real>(1))
 			{
 				fp.e.outFeature = POS_Y;
 			}
@@ -464,8 +474,8 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 		}
 		
 		auto nContact = ((p2 + x2[0] * s2) - (p1 + x1[0] * s1));
-		float nContactNorm = nContact.norm();
-		if (nContactNorm > 1e-4)
+		Real nContactNorm = nContact.norm();
+		if (nContactNorm > eps)
 		{
 			contacts[0].normal = nContact.normalized();
 		}
@@ -475,7 +485,7 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 		}
 		
 		contacts[0].separation = sqrtf(sqDist) - r1 - r2;
-		contacts[0].position = (p1 + x1[0] * s1) + 0.5f * (r1 - r2 + sqrtf(sqDist)) * contacts[0].normal;
+		contacts[0].position = (p1 + x1[0] * s1) + static_cast<Real>(0.5) * (r1 - r2 + sqrtf(sqDist)) * contacts[0].normal;
 		contacts[0].feature = fp;
 		
 		return 1;
@@ -485,28 +495,30 @@ int manifoldQR(Contact<T>* contacts, const Capsule<T>& bodyA, const Capsule<T>& 
 }
 
 // 2D rotation matrix around the origin
-Mat22 rotation2D(float angle)
+template <typename Real>
+Eigen::Matrix<Real, 2, 2> rotation2D(Real angle)
 {
-	Mat22 rotMat = Mat22();
-	rotMat(0, 0) = std::cosf(angle);
-	rotMat(0, 1) = -std::sinf(angle);
-	rotMat(1, 0) = std::sinf(angle);
-	rotMat(1, 1) = std::cosf(angle);
+	Eigen::Matrix<Real, 2, 2> rotMat = Eigen::Matrix<Real, 2, 2>();
+	rotMat(0, 0) = std::cos(angle);
+	rotMat(0, 1) = -std::sin(angle);
+	rotMat(1, 0) = std::sin(angle);
+	rotMat(1, 1) = std::cos(angle);
 
 	return rotMat;
 }
 
 // Euler rotation matrix
 // rotation order XYZ
-Mat33 rotation3D(float a, float b, float c)
+template <typename Real>
+Eigen::Matrix<Real, 3, 3> rotation3D(Real a, Real b, Real c)
 {
-	Mat33 eulerMat = Mat33();
-	float sin_a = std::sinf(a);
-	float cos_a = std::cosf(a);
-	float sin_b = std::sinf(b);
-	float cos_b = std::cosf(b);
-	float sin_c = std::sinf(c);
-	float cos_c = std::cosf(c);
+	Eigen::Matrix<Real, 3, 3> eulerMat = Eigen::Matrix<Real, 3, 3>();
+	Real sin_a = std::sin(a);
+	Real cos_a = std::cos(a);
+	Real sin_b = std::sin(b);
+	Real cos_b = std::cos(b);
+	Real sin_c = std::sin(c);
+	Real cos_c = std::cos(c);
 	
 	eulerMat(0, 0) = cos_b * cos_c;
 	eulerMat(0, 1) = -cos_b * sin_c;
@@ -524,16 +536,17 @@ Mat33 rotation3D(float a, float b, float c)
 }
 
 // Inigo Quilez
-Mat33 rotationAlign3D(Vec3 a, Vec3 b)
+template <typename Real>
+Eigen::Matrix<Real, 3, 3> rotationAlign3D(Eigen::Matrix<Real, 3, 1> a, Eigen::Matrix<Real, 3, 1> b)
 {
 	a.normalize();
 	b.normalize();
 
-	const Vec3 v = a.cross(b);
-	float c = a.dot(b);
-	float k = 1.0f / (1.0f + c);
+	const Eigen::Matrix<Real, 3, 1> v = a.cross(b);
+	Real c = a.dot(b);
+	Real k = static_cast<Real>(1) / (static_cast<Real>(1) + c);
 
-	Mat33 eulerMat = Mat33();
+	Eigen::Matrix<Real, 3, 3> eulerMat = Eigen::Matrix<Real, 3, 3>();
 
 	eulerMat <<
 		v.x() * v.x() * k + c, v.y() * v.x() * k - v.z(), v.z() * v.x() * k + v.y(),
@@ -544,9 +557,10 @@ Mat33 rotationAlign3D(Vec3 a, Vec3 b)
 }
 
 // 2D homogeneous matrix
-Mat33 homogeneous2D(Mat22 linear, Vec2 displacement)
+template <typename Real>
+Eigen::Matrix<Real, 3, 3> homogeneous2D(Eigen::Matrix<Real, 2, 2> linear, Eigen::Matrix<Real, 2, 1> displacement)
 {
-	Mat33 hMat = Mat33::Identity();
+	Eigen::Matrix<Real, 3, 3> hMat = Eigen::Matrix<Real, 3, 3>::Identity();
 	hMat.block<2, 2>(0, 0) = linear;
 	hMat.block<2, 1>(0, 2) = displacement;
 
@@ -554,9 +568,10 @@ Mat33 homogeneous2D(Mat22 linear, Vec2 displacement)
 }
 
 // 3D homogeneous matrix
-Mat44 homogeneous3D(Mat33 linear, Vec3 displacement)
+template <typename Real>
+Eigen::Matrix<Real, 4, 4> homogeneous3D(Eigen::Matrix<Real, 3, 3> linear, Eigen::Matrix<Real, 3, 1> displacement)
 {
-	Mat44 hMat = Mat44::Identity();
+	Eigen::Matrix<Real, 4, 4> hMat = Eigen::Matrix<Real, 4, 4>::Identity();
 	hMat.block<3, 3>(0, 0) = linear;
 	hMat.block<3, 1>(0, 3) = displacement;
 
